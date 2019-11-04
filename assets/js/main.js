@@ -1,3 +1,167 @@
+function vueView() {
+  const ClassNames = {
+      Full: 'view-in--full',
+      In: 'view-in',
+      GtHalf: 'view-in--gt-half',
+      GtThird: 'view-in--gt-third',
+      Out: 'view-out',
+      Above: 'view-out--above',
+      Below: 'view-out--below'
+    },
+    EventTypes = {
+      Enter: 'enter',
+      Exit: 'exit',
+      Progress: 'progress'
+    }
+
+  function throttle(handler, timeout = 0) {
+    if (!handler || typeof handler !== 'function') throw new Error('Throttle handler argument is not incorrect. Must be a function.')
+    let timeoutTime = 0
+    return function (e) {
+      if (timeoutTime) return
+      timeoutTime = setTimeout(() => {
+        timeoutTime = 0
+        handler(e)
+      }, timeout)
+    }
+  }
+
+  function roundPercent(v) {
+    return (v * 1000 | 0) / 1000
+  }
+
+  function createInstance(Vue, options) {
+    const items = {},
+      scrollThrottledHandler = throttle(scrollHandler, 40)
+
+    let scrollValue = window.pageYOffset,
+      itemIndex = 0
+
+    window.addEventListener('scroll', scrollThrottledHandler)
+    window.addEventListener('resize', scrollThrottledHandler)
+
+    function scrollHandler(e) {
+      let viewportTop = window.pageYOffset,
+        viewportBottom = window.pageYOffset + window.document.documentElement.clientHeight,
+        viewportHeight = window.document.documentElement.clientHeight,
+        documentHeight = window.document.documentElement.scrollHeight,
+        scrollPercent = roundPercent(window.pageYOffset / (documentHeight - viewportHeight))
+
+      scrollValue = viewportTop - scrollValue
+
+      function getInType(i) {
+        const rect = i.element.getBoundingClientRect(),
+          elementTop = rect.top + viewportTop,
+          elementBottom = elementTop + rect.height,
+          topIn = elementTop > viewportTop && elementTop < viewportBottom,
+          bottomIn = elementBottom > viewportTop && elementBottom < viewportBottom,
+          percentInView = topIn || bottomIn ? ((bottomIn ? elementBottom : viewportBottom) - (topIn ? elementTop : viewportTop)) / rect.height : 0,
+          centerPercent = (elementTop - viewportTop + rect.height / 2) / viewportHeight,
+          zeroPoint = viewportTop - rect.height,
+          topPercent = (elementTop - zeroPoint) / (viewportBottom - zeroPoint),
+          isAbove = percentInView === 0 && elementTop < viewportTop,
+          isBelow = percentInView === 0 && elementTop > viewportTop
+
+        return [(topIn ? 1 : 0) | (bottomIn ? 2 : 0) | (isAbove ? 4 : 0) | (isBelow ? 8 : 0), roundPercent(percentInView), roundPercent(centerPercent), roundPercent(topPercent), rect]
+      }
+
+      for (let id in items) {
+        const i = items[id],
+          [type, percentInView, percentCenter, percentTop, rect] = getInType(i),
+          classes = i.classes,
+          classList = i.element.classList,
+          inViewChange = i.percent <= 0 && percentInView,
+          outViewChange = i.percent && percentInView === 0
+
+        if (percentInView === 0 && i.percent === 0) continue
+        i.rect = rect
+
+        let eventType = (inViewChange && EventTypes.Enter) || (outViewChange && EventTypes.Exit) || EventTypes.Progress
+
+        Object.keys(classes).forEach(v => (classes[v] = false))
+
+        if (percentInView >= 0.5) {
+          classes[ClassNames.GtHalf] = true
+        }
+        else if (percentInView >= 0.3) {
+          classes[ClassNames.GtThird] = true
+        }
+
+        if (type === 8) {
+          classes[ClassNames.Below] = true
+          classes[ClassNames.Out] = true
+        }
+        else if (type === 4) {
+          classes[ClassNames.Above] = true
+          classes[ClassNames.Out] = true
+        }
+        else if (type === 3) {
+          classes[ClassNames.Full] = true
+          classes[ClassNames.In] = true
+        }
+        else if (type === 1) {
+          classes[ClassNames.In] = true
+        }
+        else if (type === 2) {
+          classes[ClassNames.In] = true
+        }
+
+        Object.keys(classes).forEach(n => {
+          classList.toggle(n, classes[n])
+          if (!classes[n]) delete classes[n]
+        })
+
+        if (typeof i.handler === 'function') {
+          i.handler({type: eventType, percentInView, percentTop, percentCenter, scrollPercent, scrollValue, target: i})
+        }
+
+        if (typeof i.onceenter === 'function' && eventType === EventTypes.Enter) {
+          i.onceenter({
+            type: eventType,
+            percentInView,
+            percentTop,
+            percentCenter,
+            scrollPercent,
+            scrollValue,
+            target: i
+          })
+          delete i.onceenter
+        }
+
+        i.percent = percentInView
+      }
+
+      scrollValue = viewportTop
+    }
+
+    Vue.directive('view', {
+      unbind: function (element, bind) {
+        delete items[element.$scrollId]
+      },
+      inserted: function (element, bind) {
+        let id = element.$scrollId || ('scrollId-' + itemIndex++),
+          item = items[id] || {element: element, classes: {}, percent: -1, rect: {}}
+
+        if (bind.modifiers && bind.modifiers.once) {
+          item.onceenter = bind.value
+        }
+        else {
+          item.handler = bind.value
+        }
+
+        element.$scrollId = id
+        items[id] = item
+        scrollThrottledHandler()
+      }
+    })
+  }
+
+  return {
+    install: function (Vue, options) {
+      Vue.directive('view', Vue.prototype.$isServer ? {} : createInstance(Vue, options))
+    }
+  }
+}
 /*!
  * Vue.js v2.6.10
  * (c) 2014-2019 Evan You
@@ -12,17 +176,123 @@ function handleRenderDone() {
   });
 }
 
+var factorBreakpoint = 795;
+var conceptsBreakpoint = 920;
+var productsBreakpoint = 776;
+
+Vue.use(vueView());
+
+Vue.component('percent-svg', {
+  props: ['percent'],
+  computed: {
+    strokeDashOffset() {
+      var hundred = 534;
+      var part = this.percent / 100;
+      return hundred - hundred*part;
+    },
+    degree() {
+      return 360 * this.percent / 100;
+    },
+    rotate() {
+      return `rotate(${this.degree})`;
+    }
+  },
+  template:
+    `<svg xmlns="http://www.w3.org/2000/svg" width="190" height="190" viewBox="0 0 190 190">
+      <g fill="none" fill-rule="evenodd">
+       <circle cx="95" cy="95" r="85" stroke="#ECF0F1" stroke-width="8"/>
+       <circle stroke="#D83139" stroke-width="8" cx="95" cy="95" r="85" transform="rotate(-90) translate(-190 0)" stroke-dasharray="534" :stroke-dashoffset="strokeDashOffset"/>
+       <g transform="translate(95 95) rotate(-135)">
+         <circle cx="60" cy="60" r="10" fill="#D83139" :transform="rotate"/>
+        </g>
+      </g>
+    </svg>`,
+});
+
+Vue.component('factor-circle', {
+  template:
+    `<div class="factor_item_image" v-view="handleView">
+      <percent-svg :percent="percentShow"></percent-svg>
+      <div class="title">{{percentShow}}%</div>
+    </div>`,
+  props: ['percent', 'duration', 'isSelected'],
+  data() {
+    return {
+      percentShow: this.percent - 0,
+      interval: null,
+      animatedOnce: false,
+      windowWidth: window.innerWidth,
+    };
+  },
+  computed: {
+    durationInt() {
+      if (!this.duration) {
+        return 1000;
+      }
+      return this.duration - 0;
+    },
+    percentInt() {
+      return this.percent - 0;
+    },
+    delay() {
+      if (this.percentInt === 0) return 0;
+      return this.durationInt / this.percentInt;
+    },
+    isMobile() {
+      return this.windowWidth <= factorBreakpoint;
+    }
+  },
+  methods: {
+    prepareToAnimate() {
+      this.stopAnimate();
+      this.percentShow = 0;
+    },
+    startAnimate() {
+      this.interval = setInterval((function() {
+        this.percentShow += 1;
+        if (this.percentShow >= this.percentInt) {
+          this.stopAnimate();
+        }
+      }).bind(this), this.delay);
+    },
+    stopAnimate() {
+      this.percentShow = this.percentInt;
+      if (this.interval) {
+        clearInterval(this.interval);
+      }
+    },
+    handleView(options) {
+      if (options.percentInView > .5 && !this.animatedOnce) {
+        this.prepareToAnimate();
+        if (!this.isMobile || this.isSelected) {
+          this.startAnimate();
+          this.animatedOnce = true;
+        }
+      }
+    },
+    getWindowWidth() {
+      this.windowWidth = window.innerWidth;
+    },
+  },
+  mounted() {
+    this.$nextTick(function() {
+      window.addEventListener('resize', this.getWindowWidth);
+    });
+    this.getWindowWidth();
+  },
+});
+
 doAfterRender.push((function () {
-  var app = new Vue({
+  new Vue({
     el: '#app',
     data: {
       showModal: false,
-      productActiveIndex: 0,
-      conceptActiveIndex: 0,
+      productActiveIndex: null,
+      conceptActiveIndex: null,
       selectedFactor: 0,
       selectedNumber: 0,
       selectedAward: 0,
-      windowWidth: 0,
+      windowWidth: window.innerWidth,
     },
     computed: {
       factorElements() {
@@ -44,7 +314,7 @@ doAfterRender.push((function () {
         return this.awardElements.length;
       },
       isFactorSlide() {
-        return this.windowWidth <= 795;
+        return this.windowWidth <= factorBreakpoint;
       },
       isNumberSlide() {
         return this.windowWidth <= 601;
@@ -69,8 +339,19 @@ doAfterRender.push((function () {
       isAwardSlide() {
         this.selectedAward = 0;
       },
+      windowWidth(to) {
+        this.setDefaultIndexes(to);
+      },
     },
     methods: {
+      setDefaultIndexes(width = this.windowWidth) {
+        if (width >= productsBreakpoint && this.productActiveIndex===null) {
+          this.productActiveIndex = 0;
+        }
+        if (width >= conceptsBreakpoint && this.conceptActiveIndex===null) {
+          this.conceptActiveIndex = 0;
+        }
+      },
       nextFactor() {
         this.selectedFactor += 1;
         this.selectedFactor %= this.factorsLength;
@@ -79,6 +360,20 @@ doAfterRender.push((function () {
         this.selectedFactor -= 1;
         if (this.selectedFactor < 0) {
           this.selectedFactor = this.factorsLength - 1;
+        }
+      },
+      setProduct(value) {
+        if (this.productActiveIndex !== value ) {
+          this.productActiveIndex = value;
+        } else {
+          this.productActiveIndex = null;
+        }
+      },
+      setConcept(value) {
+        if (this.conceptActiveIndex !== value) {
+          this.conceptActiveIndex = value;
+        } else {
+          this.conceptActiveIndex = null;
         }
       },
       nextNumber() {
@@ -116,6 +411,7 @@ doAfterRender.push((function () {
         window.addEventListener('resize', this.getWindowWidth);
       });
       this.getWindowWidth();
+      this.setDefaultIndexes();
     },
   });
 }));
